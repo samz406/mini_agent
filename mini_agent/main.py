@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import Optional
 
@@ -20,6 +21,7 @@ from mini_agent.core.loop import AgentEvent, AgentLoop
 from mini_agent.core.prompt import PromptBuilder
 from mini_agent.memory.conversation import ConversationMemory
 from mini_agent.memory.persistent import PersistentMemory
+from mini_agent.providers import get_provider, list_providers
 from mini_agent.tools.base import GLOBAL_REGISTRY
 
 # Ensure built-in tools are registered
@@ -111,6 +113,8 @@ COMMANDS = {
     "/clear": "Clear conversation history",
     "/memory": "Show persistent memory contents",
     "/tools": "List available tools",
+    "/provider": "Show current provider or list all providers",
+    "/providers": "List all supported LLM providers",
     "/help": "Show this help message",
 }
 
@@ -122,6 +126,22 @@ def _print_help() -> None:
     console.print("\n".join(lines))
 
 
+def _print_providers(current_config: Optional["AgentConfig"] = None) -> None:
+    """Print the supported providers and highlight the active one."""
+    lines: list[str] = []
+    for p in list_providers():
+        active = (
+            current_config is not None
+            and current_config.provider.lower() == p.name.lower()
+        )
+        marker = " [bold green]← active[/bold green]" if active else ""
+        lines.append(
+            f"  [cyan]{p.name:<10}[/cyan]  {p.description}\n"
+            f"             api_base=[dim]{p.api_base}[/dim]  key_env=[dim]{p.key_env_var}[/dim]{marker}"
+        )
+    console.print(Panel("\n".join(lines), title="Supported LLM Providers", border_style="cyan"))
+
+
 def run_interactive(agent: MiniAgent) -> None:
     """Run the interactive REPL loop."""
     console.print(
@@ -129,6 +149,7 @@ def run_interactive(agent: MiniAgent) -> None:
             Text.from_markup(
                 "[bold blue]Mini Agent[/bold blue]\n"
                 "[dim]A production-grade AI agent — built for learning[/dim]\n\n"
+                f"[dim]Provider:[/dim] [cyan]{agent.config.provider}[/cyan]   "
                 f"[dim]Model:[/dim] [cyan]{agent.config.model}[/cyan]   "
                 f"[dim]Tools:[/dim] [cyan]{len(agent.list_tools())}[/cyan]   "
                 "[dim]Type[/dim] [cyan]/help[/cyan] [dim]for commands[/dim]"
@@ -175,6 +196,10 @@ def run_interactive(agent: MiniAgent) -> None:
             console.print(Panel(tool_list, title="Available Tools", border_style="cyan"))
             continue
 
+        if user_input.lower() in ("/provider", "/providers"):
+            _print_providers(agent.config)
+            continue
+
         if user_input.lower() == "/help":
             _print_help()
             continue
@@ -205,11 +230,31 @@ def main() -> None:
     )
     parser.add_argument("--model", help="LLM model name (overrides MINI_AGENT_MODEL)")
     parser.add_argument("--api-base", dest="api_base", help="API base URL (overrides MINI_AGENT_API_BASE)")
+    parser.add_argument(
+        "--provider",
+        help=(
+            "LLM provider name: openai, qwen, kimi, minimax, deepseek, glm "
+            "(overrides MINI_AGENT_PROVIDER)"
+        ),
+    )
     parser.add_argument("--system-prompt", dest="system_prompt", help="Custom system prompt")
 
     args = parser.parse_args()
 
     config = AgentConfig.from_env()
+    if args.provider:
+        provider_cfg = get_provider(args.provider)
+        if provider_cfg is None:
+            console.print(f"[red]Unknown provider '{args.provider}'. Run /providers to see options.[/red]")
+            sys.exit(1)
+        config.provider = args.provider.lower()
+        # Apply provider defaults only when not already explicitly overridden
+        if not args.api_base:
+            config.api_base = provider_cfg.api_base
+        if not config.api_key:
+            config.api_key = os.getenv(provider_cfg.key_env_var, "")
+        if not args.model:
+            config.model = provider_cfg.default_model
     if args.model:
         config.model = args.model
     if args.api_base:
@@ -218,9 +263,11 @@ def main() -> None:
         config.system_prompt = args.system_prompt
 
     if not config.api_key:
+        p = get_provider(config.provider)
+        key_var = p.key_env_var if p else "OPENAI_API_KEY"
         console.print(
-            "[yellow]Warning: OPENAI_API_KEY is not set. "
-            "Set it via the environment variable or a .env file.[/yellow]"
+            f"[yellow]Warning: API key not set. "
+            f"Set it via the [bold]{key_var}[/bold] environment variable or a .env file.[/yellow]"
         )
 
     agent = MiniAgent(config=config)
