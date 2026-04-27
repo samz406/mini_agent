@@ -114,7 +114,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         from openai import RateLimitError
 
         payload = self._messages_to_dicts(messages)
-        last_exc: Exception | None = None
+        last_exc: Optional[Exception] = None
 
         for attempt in range(self._MAX_RETRIES):
             try:
