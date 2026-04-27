@@ -48,6 +48,7 @@ mini_agent/
 │
 └── mini_agent/              # 🚀 Complete production package
     ├── config.py            # Centralised config (env-driven)
+    ├── providers.py         # LLM provider registry (Qwen, Kimi, MiniMax, DeepSeek, GLM…)
     ├── main.py              # Rich CLI entry point
     ├── core/
     │   ├── llm.py           # OpenAI-compatible client
@@ -78,23 +79,70 @@ pip install -e .
 
 ### 2. Set Your API Key
 
+Choose a provider and set its API key:
+
 ```bash
+# OpenAI (default)
 export OPENAI_API_KEY=sk-your-key-here
-# or create a .env file:
-echo "OPENAI_API_KEY=sk-your-key-here" > .env
+
+# Qwen (Alibaba Cloud)
+export DASHSCOPE_API_KEY=sk-your-key-here
+
+# Kimi / Moonshot
+export MOONSHOT_API_KEY=sk-your-key-here
+
+# MiniMax
+export MINIMAX_API_KEY=your-key-here
+
+# DeepSeek
+export DEEPSEEK_API_KEY=sk-your-key-here
+
+# GLM / Zhipu AI
+export ZHIPU_API_KEY=your-key-here
+```
+
+Or create a `.env` file:
+```bash
+echo "MINI_AGENT_PROVIDER=deepseek" > .env
+echo "DEEPSEEK_API_KEY=sk-your-key-here" >> .env
 ```
 
 ### 3. Run the Agent
 
 ```bash
+# Default (OpenAI gpt-4o-mini)
 mini-agent
+
+# Pick a provider via --provider flag
+mini-agent --provider qwen
+mini-agent --provider kimi
+mini-agent --provider minimax
+mini-agent --provider deepseek
+mini-agent --provider glm
+
+# Override model within a provider
+mini-agent --provider qwen --model qwen-max
+
+# Or use env variables
+MINI_AGENT_PROVIDER=deepseek mini-agent
 ```
 
-Or with options:
+---
 
-```bash
-mini-agent --model gpt-4o --system-prompt "You are a Python tutor."
-```
+## Supported LLM Providers
+
+All providers expose an OpenAI-compatible API — no extra dependencies needed.
+
+| Provider | Key Env Var | Default Model | API Base |
+|----------|-------------|---------------|----------|
+| `openai` | `OPENAI_API_KEY` | `gpt-4o-mini` | `https://api.openai.com/v1` |
+| `qwen` | `DASHSCOPE_API_KEY` | `qwen-turbo` | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| `kimi` | `MOONSHOT_API_KEY` | `moonshot-v1-8k` | `https://api.moonshot.cn/v1` |
+| `minimax` | `MINIMAX_API_KEY` | `MiniMax-Text-01` | `https://api.minimax.chat/v1` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` | `https://api.deepseek.com/v1` |
+| `glm` | `ZHIPU_API_KEY` | `glm-4-flash` | `https://open.bigmodel.cn/api/paas/v4` |
+
+Use the `/providers` command inside the REPL to see them all, with the active one highlighted.
 
 ---
 
@@ -108,6 +156,8 @@ Once the agent is running, use these slash commands:
 | `/tools` | List available tools |
 | `/memory` | Show persistent memory |
 | `/clear` | Clear conversation history |
+| `/provider` | Show current provider and all supported providers |
+| `/providers` | List all supported LLM providers |
 | `/quit` | Exit |
 
 ---
@@ -169,9 +219,15 @@ python skill_system.py
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENAI_API_KEY` | *(required)* | Your OpenAI API key |
-| `MINI_AGENT_MODEL` | `gpt-4o-mini` | LLM model to use |
-| `MINI_AGENT_API_BASE` | OpenAI default | Custom API base URL |
+| `MINI_AGENT_PROVIDER` | `openai` | Provider name (`openai`, `qwen`, `kimi`, `minimax`, `deepseek`, `glm`) |
+| `OPENAI_API_KEY` | *(required for openai)* | OpenAI API key |
+| `DASHSCOPE_API_KEY` | *(required for qwen)* | Alibaba Cloud DashScope API key |
+| `MOONSHOT_API_KEY` | *(required for kimi)* | Moonshot AI API key |
+| `MINIMAX_API_KEY` | *(required for minimax)* | MiniMax API key |
+| `DEEPSEEK_API_KEY` | *(required for deepseek)* | DeepSeek API key |
+| `ZHIPU_API_KEY` | *(required for glm)* | Zhipu AI API key |
+| `MINI_AGENT_MODEL` | *(provider default)* | LLM model name override |
+| `MINI_AGENT_API_BASE` | *(provider default)* | Custom API base URL override |
 | `MINI_AGENT_MAX_ITERATIONS` | `10` | Max ReAct loop iterations |
 | `MINI_AGENT_MAX_TOKENS` | `8000` | Context window token budget |
 | `MINI_AGENT_TEMPERATURE` | `0.7` | LLM temperature |
