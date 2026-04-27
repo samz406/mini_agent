@@ -9,7 +9,7 @@ import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Iterator, Optional
 
 
 @dataclass
@@ -70,7 +70,7 @@ class OpenAIClient(BaseLLMClient):
         from openai import RateLimitError
 
         payload = [m.to_dict() for m in messages]
-        last_exc: Exception | None = None
+        last_exc: Optional[Exception] = None
 
         for attempt in range(self.max_retries):
             try:

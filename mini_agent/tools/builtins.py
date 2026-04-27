@@ -108,16 +108,24 @@ def get_current_date() -> str:
 
 @tool(
     name="read_file",
-    description="Read the contents of a text file (max 10,000 characters).",
+    description="Read the contents of a text file (max 10,000 characters). Only files within the current working directory tree are accessible.",
     parameters=[
         ToolParameter(name="path", type="string", description="Path to the file to read.")
     ],
     returns="File contents as a string.",
 )
 def read_file(path: str) -> str:
-    """Read a file and return up to 10 000 chars of its content."""
+    """Read a file and return up to 10 000 chars of its content.
+
+    The resolved path must remain inside the current working directory to
+    prevent directory-traversal attacks.
+    """
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        resolved = os.path.realpath(os.path.abspath(path))
+        cwd = os.path.realpath(os.getcwd())
+        if not resolved.startswith(cwd + os.sep) and resolved != cwd:
+            return f"Error: Access denied. Path must be within the current working directory."
+        with open(resolved, "r", encoding="utf-8") as fh:
             content = fh.read(10_000)
         return content
     except FileNotFoundError:
@@ -128,17 +136,25 @@ def read_file(path: str) -> str:
 
 @tool(
     name="write_file",
-    description="Write text content to a file, creating or overwriting it.",
+    description="Write text content to a file within the current working directory, creating or overwriting it.",
     parameters=[
-        ToolParameter(name="path", type="string", description="Destination file path."),
+        ToolParameter(name="path", type="string", description="Destination file path (must be within current working directory)."),
         ToolParameter(name="content", type="string", description="Text content to write."),
     ],
     returns="Confirmation message.",
 )
 def write_file(path: str, content: str) -> str:
-    """Write content to a file."""
+    """Write content to a file.
+
+    The resolved path must remain inside the current working directory to
+    prevent directory-traversal attacks.
+    """
     try:
-        with open(path, "w", encoding="utf-8") as fh:
+        resolved = os.path.realpath(os.path.abspath(path))
+        cwd = os.path.realpath(os.getcwd())
+        if not resolved.startswith(cwd + os.sep) and resolved != cwd:
+            return f"Error: Access denied. Path must be within the current working directory."
+        with open(resolved, "w", encoding="utf-8") as fh:
             fh.write(content)
         return f"Successfully wrote {len(content)} characters to {path}."
     except OSError as exc:
