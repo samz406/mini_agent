@@ -1,0 +1,8 @@
+{
+    "name": "calculator",
+    "version": "1.0.0",
+    "description": "Provides safe mathematical calculation tools.",
+    "entry": "impl",
+    "enabled": true,
+    "prompt_addition": "You can perform mathematical calculations using the 'calc' tool. Use it whenever the user asks for numeric computations."
+}

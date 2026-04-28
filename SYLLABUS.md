@@ -196,6 +196,33 @@ python skill_system.py
 
 ---
 
+## 第八章：插件机制（Plugin Mechanism）
+
+**代码文件：** `chapters/ch08_plugin/plugin_system.py`
+
+### 学习目标
+- 理解基于文件系统的插件发现与动态加载
+- 掌握 `importlib.util` 动态导入 Python 模块
+- 学习插件清单（JSON）与插件生命周期钩子（on_load / on_unload）
+- 区分静态技能系统（ch07）与动态插件系统的应用场景
+
+### 核心概念
+| 概念 | 说明 |
+|------|------|
+| 插件清单（PluginManifest） | `plugin.json` 描述插件元数据，含 `enabled` 开关 |
+| 目录扫描（Discovery） | `PluginLoader` 运行时扫描文件系统，无需预知插件名 |
+| 动态加载（importlib） | `spec_from_file_location` + `exec_module` 独立命名空间加载 |
+| 生命周期钩子 | `on_load` 初始化资源，`on_unload` 释放资源 |
+| 热重载（Reload） | 不重启进程，卸载并重新从磁盘读取插件 |
+
+### 运行方式
+```bash
+cd chapters/ch08_plugin
+python plugin_system.py
+```
+
+---
+
 ## 综合项目：Mini Agent
 
 **代码目录：** `mini_agent/`
@@ -235,7 +262,7 @@ mini-agent
 ```
 第一章 → 第二章 → 第三章 → 第四章
                               ↓
-              综合项目 ← 第七章 ← 第六章 ← 第五章
+              综合项目 ← 第八章 ← 第七章 ← 第六章 ← 第五章
 ```
 
 建议按顺序学习，每章先阅读 README.md，再研读代码，最后运行示例验证理解。
