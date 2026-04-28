@@ -223,6 +223,33 @@ python plugin_system.py
 
 ---
 
+## 第九章：MCP（Model Context Protocol）
+
+**代码文件：** `chapters/ch09_mcp/mcp_demo.py`
+
+### 学习目标
+- 理解 MCP 协议解决的核心问题（M×N 工具集成爆炸）
+- 掌握 MCP Server 的编写方式（工具定义、工具调用处理器）
+- 学会用 MCP Client 动态发现并调用工具
+- 了解如何将 MCP 工具集成到 mini_agent 的工具注册表
+
+### 核心概念
+| 概念 | 说明 |
+|------|------|
+| MCP Server | 独立进程，通过 stdio/HTTP 对外暴露工具 |
+| MCP Client | 嵌入 Agent，负责连接 Server、获取工具列表、调用工具 |
+| Tools | MCP 三大能力之一，Agent 调用后得到结果 |
+| MCPToolLoader | mini_agent 适配器，将 MCP 工具注册到 ToolRegistry |
+
+### 运行方式
+```bash
+cd chapters/ch09_mcp
+pip install mcp>=1.23.0
+python mcp_demo.py
+```
+
+---
+
 ## 综合项目：Mini Agent
 
 **代码目录：** `mini_agent/`
@@ -262,7 +289,7 @@ mini-agent
 ```
 第一章 → 第二章 → 第三章 → 第四章
                               ↓
-              综合项目 ← 第八章 ← 第七章 ← 第六章 ← 第五章
+  综合项目 ← 第九章 ← 第八章 ← 第七章 ← 第六章 ← 第五章
 ```
 
 建议按顺序学习，每章先阅读 README.md，再研读代码，最后运行示例验证理解。
