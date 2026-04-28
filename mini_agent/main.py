@@ -238,6 +238,18 @@ def main() -> None:
         ),
     )
     parser.add_argument("--system-prompt", dest="system_prompt", help="Custom system prompt")
+    parser.add_argument(
+        "--mcp-server",
+        dest="mcp_servers",
+        action="append",
+        metavar="NAME:CMD[:ARG1:ARG2...]",
+        help=(
+            "Attach an MCP server and register its tools. "
+            "Format: NAME:COMMAND[:ARG1[:ARG2...]]  "
+            "Example: --mcp-server fs:npx:-y:@modelcontextprotocol/server-filesystem:/tmp  "
+            "Can be specified multiple times to attach several servers."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -271,6 +283,31 @@ def main() -> None:
         )
 
     agent = MiniAgent(config=config)
+
+    # --- Load MCP servers if requested ---
+    if args.mcp_servers:
+        from mini_agent.tools.mcp_client import MCPToolLoader
+        loader = MCPToolLoader(agent.tool_registry)
+        for spec in args.mcp_servers:
+            parts = spec.split(":")
+            if len(parts) < 2:
+                console.print(
+                    f"[red]Invalid --mcp-server spec '{spec}'. "
+                    "Expected format: NAME:COMMAND[:ARG1[:ARG2...]][/red]"
+                )
+                continue
+            srv_name = parts[0]
+            srv_cmd = parts[1]
+            srv_args = parts[2:]
+            try:
+                registered = loader.load_server(srv_name, command=srv_cmd, args=srv_args)
+                console.print(
+                    f"[green]✓ MCP server '[bold]{srv_name}[/bold]' loaded "
+                    f"({len(registered)} tools)[/green]"
+                )
+            except Exception as exc:
+                console.print(f"[red]Failed to load MCP server '{srv_name}': {exc}[/red]")
+
     run_interactive(agent)
 
 

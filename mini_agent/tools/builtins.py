@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import os
 import operator
+import subprocess
 from datetime import datetime
 from typing import Optional
 
@@ -185,6 +186,57 @@ def list_directory(path: str = ".") -> str:
         return f"Error: Directory not found: {path}"
     except OSError as exc:
         return f"Error listing directory: {exc}"
+
+
+@tool(
+    name="run_bash",
+    description=(
+        "Execute a bash shell command and return its output (stdout + stderr combined). "
+        "Commands run in the current working directory with a 30-second timeout. "
+        "Use this tool for file operations, running scripts, checking system state, etc. "
+        "Avoid commands that require user interaction or produce very long output."
+    ),
+    parameters=[
+        ToolParameter(
+            name="command",
+            type="string",
+            description="The bash command to execute, e.g. 'ls -la' or 'python script.py'.",
+        ),
+        ToolParameter(
+            name="timeout",
+            type="integer",
+            description="Maximum seconds to wait for the command to complete (default: 30, max: 120).",
+            required=False,
+        ),
+    ],
+    returns="Combined stdout and stderr from the command, prefixed with the exit code.",
+)
+def run_bash(command: str, timeout: int = 30) -> str:
+    """Run a shell command and return its output.
+
+    Safety measures:
+    - Commands run with ``shell=True`` but are NOT sanitised; the LLM is responsible
+      for not issuing destructive commands.
+    - Timeout is capped at 120 seconds to prevent indefinite blocking.
+    - The process inherits the current working directory and environment.
+    """
+    timeout = min(int(timeout), 120)
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        output = proc.stdout + proc.stderr
+        if len(output) > 8000:
+            output = output[:8000] + "\n… (output truncated)"
+        return f"Exit code: {proc.returncode}\n{output}"
+    except subprocess.TimeoutExpired:
+        return f"Error: Command timed out after {timeout} seconds."
+    except Exception as exc:
+        return f"Error executing command: {exc}"
 
 
 @tool(
