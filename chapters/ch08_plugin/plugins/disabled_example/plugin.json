@@ -1,0 +1,8 @@
+{
+    "name": "disabled_example",
+    "version": "1.0.0",
+    "description": "This plugin is intentionally disabled to demonstrate the 'enabled' flag.",
+    "entry": "impl",
+    "enabled": false,
+    "prompt_addition": ""
+}

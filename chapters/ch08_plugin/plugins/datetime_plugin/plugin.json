@@ -1,0 +1,8 @@
+{
+    "name": "datetime_plugin",
+    "version": "1.0.0",
+    "description": "Provides current date and time information.",
+    "entry": "impl",
+    "enabled": true,
+    "prompt_addition": "You can access the current date and time using 'now_time' and 'now_date' tools."
+}
