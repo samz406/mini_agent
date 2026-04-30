@@ -346,7 +346,7 @@ def _tokenise(text: str) -> set[str]:
     cjk = re.findall(r"[\u4e00-\u9fff]", text)
     for n in (2, 3):
         for i in range(len(cjk) - n + 1):
-            tokens.add("".join(cjk[i: i + n]))
+            tokens.add("".join(cjk[i : i + n]))
     return tokens
 
 
