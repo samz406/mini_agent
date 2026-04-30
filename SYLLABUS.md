@@ -309,6 +309,35 @@ python multi_agent.py
 
 ---
 
+## 第十二章：多层次记忆（Multi-Level Memory）
+
+**代码文件：** `chapters/ch12_multi_level_memory/multi_level_memory.py`
+
+### 学习目标
+- 理解单一记忆结构无法满足长期 Agent 需求的根本原因
+- 掌握四层记忆架构：工作记忆 → 情景记忆 → 语义记忆 → 程序性记忆
+- 学会在会话结束时将工作记忆压缩为情景摘要（Episode）
+- 实现基于类别和置信度的语义记忆（用户画像 + 偏好）
+- 理解如何在新会话开始时重建历史上下文并注入 system prompt
+- 了解 hermes-agent 的 Honcho 用户建模与 FTS5 会话检索
+
+### 核心概念
+| 概念 | 说明 |
+|------|------|
+| 工作记忆（Working Memory） | 当前对话上下文，deque 滑动窗口，会话结束后清空 |
+| 情景记忆（Episodic Memory） | 历史会话的自然语言摘要，可按关键词检索 |
+| 语义记忆（Semantic Memory） | 关于用户和世界的事实性知识，按类别/键名查询，带置信度 |
+| 程序性记忆（Procedural Memory） | 如何完成任务的技能（见第十章），是持久性最强的一层 |
+| 上下文重建（Context Reconstruction） | 新会话开始时从持久化层拉取相关历史，注入 system prompt |
+
+### 运行方式
+```bash
+cd chapters/ch12_multi_level_memory
+python multi_level_memory.py
+```
+
+---
+
 ## 综合项目：Mini Agent
 
 **代码目录：** `mini_agent/`
@@ -348,7 +377,9 @@ mini-agent
 ```
 第一章 → 第二章 → 第三章 → 第四章
                               ↓
-  综合项目 ← 第十一章 ← 第十章 ← 第九章 ← 第八章 ← 第七章 ← 第六章 ← 第五章
+第十二章 ← 第十一章 ← 第十章 ← 第九章 ← 第八章 ← 第七章 ← 第六章 ← 第五章
+    ↓
+综合项目
 ```
 
 建议按顺序学习，每章先阅读 README.md，再研读代码，最后运行示例验证理解。
