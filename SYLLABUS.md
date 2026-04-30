@@ -250,6 +250,62 @@ python mcp_demo.py
 
 ---
 
+## 第十章：学习循环（Learning Loop）
+
+**代码文件：** `chapters/ch10_learning_loop/learning_loop.py`
+
+### 学习目标
+- 理解 Agent 学习循环的设计思路：从经验中自动提炼可复用技能
+- 掌握经验（Experience）→ 合成（Synthesis）→ 存储（Store）→ 检索（Search）的完整闭环
+- 学习基于关键词的轻量级技能检索（无需向量数据库）
+- 理解技能版本化改进的设计原则
+- 了解 hermes-agent 的自改进技能系统
+
+### 核心概念
+| 概念 | 说明 |
+|------|------|
+| 经验（Experience） | 一次成功任务完成的完整记录（任务、步骤、结果、时间戳） |
+| 技能（Skill） | 从经验中提炼的可复用过程性知识，带有版本和使用次数 |
+| SkillStore | JSON 持久化技能库，跨会话保留所有学到的技能 |
+| SkillSynthesizer | 将经验转化为技能（或改进现有技能）的合成器 |
+| 版本化改进 | 每次遇到相似任务时，技能版本号递增、步骤持续完善 |
+
+### 运行方式
+```bash
+cd chapters/ch10_learning_loop
+python learning_loop.py
+```
+
+---
+
+## 第十一章：多智能体协作（Multi-Agent）
+
+**代码文件：** `chapters/ch11_multi_agent/multi_agent.py`
+
+### 学习目标
+- 理解单 Agent 架构的局限性（上下文窗口、无并行、难以专业化）
+- 掌握 Orchestrator-SubAgent 模式：分解→并行委托→汇总
+- 学习使用 `ThreadPoolExecutor` 并行执行多个 SubAgent
+- 理解错误隔离：单个 SubAgent 失败不影响整体结果
+- 了解 hermes-agent 的进程级子智能体隔离与 RPC 工具调用
+
+### 核心概念
+| 概念 | 说明 |
+|------|------|
+| OrchestratorAgent | 接收复杂任务，分解为子任务，协调所有 SubAgent，汇总结果 |
+| SubAgent | 独立线程中运行的专项 Agent，拥有独立上下文和最小权限工具集 |
+| TaskSpec | 子任务的结构化描述：工作内容、工具权限、超时保护 |
+| Fan-out / Fan-in | 任务扇出到 N 个并行 SubAgent，N 个结果扇入合并为统一回答 |
+| 错误隔离 | 任意 SubAgent 超时或崩溃，编排器照常聚合其他 SubAgent 的结果 |
+
+### 运行方式
+```bash
+cd chapters/ch11_multi_agent
+python multi_agent.py
+```
+
+---
+
 ## 综合项目：Mini Agent
 
 **代码目录：** `mini_agent/`
@@ -289,7 +345,7 @@ mini-agent
 ```
 第一章 → 第二章 → 第三章 → 第四章
                               ↓
-  综合项目 ← 第九章 ← 第八章 ← 第七章 ← 第六章 ← 第五章
+  综合项目 ← 第十一章 ← 第十章 ← 第九章 ← 第八章 ← 第七章 ← 第六章 ← 第五章
 ```
 
 建议按顺序学习，每章先阅读 README.md，再研读代码，最后运行示例验证理解。
