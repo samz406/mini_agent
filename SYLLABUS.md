@@ -18,6 +18,9 @@
 
 **代码文件：** `chapters/ch01_llm_client/llm_client.py`
 
+### 前置背景阅读
+阅读 `chapters/ch01_llm_client/llm_background.md`，了解人工智能发展历史及大语言模型的演进过程，建立整体认知框架。
+
 ### 学习目标
 - 理解如何对 LLM API 进行抽象封装
 - 掌握 Python ABC（抽象基类）模式
