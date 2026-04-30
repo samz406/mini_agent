@@ -356,7 +356,10 @@ class OrchestratorAgent(BaseAgent):
 
         success_count = sum(1 for r in results if r.status == "success")
         fail_count = len(results) - success_count
-        total_time = max((r.elapsed for r in results), default=0)
+        total_time = max(
+            (r.elapsed for r in results if r.elapsed > 0),
+            default=max((r.elapsed for r in results), default=0.0),
+        )
 
         lines.append(f"子任务完成: {success_count}/{len(results)} 成功  "
                      f"({'并行总耗时' if len(results) > 1 else '耗时'}: {total_time:.2f}s)")

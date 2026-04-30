@@ -215,7 +215,7 @@ class SkillSynthesizer:
         else:
             # CJK task: use a 6-char hex digest for a stable, short name
             import hashlib
-            name = "skill_" + hashlib.md5(exp.task.encode()).hexdigest()[:6]
+            name = "skill_" + hashlib.blake2b(exp.task.encode(), digest_size=3).hexdigest()
         if existing:
             name = existing.name
 
@@ -246,7 +246,10 @@ class SkillSynthesizer:
 
         if existing:
             # Improvement: merge steps and keep both templates
-            old_steps = existing.template.split("执行步骤：\n")[1].split("\n\n")[0]
+            try:
+                old_steps = existing.template.split("执行步骤：\n")[1].split("\n\n")[0]
+            except IndexError:
+                old_steps = existing.template
             template = textwrap.dedent(f"""\
                 任务：{{task}}
 
