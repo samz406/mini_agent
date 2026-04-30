@@ -14,8 +14,582 @@ ch06 实现了三个提示词工具：`SystemPromptBuilder`（链式 Builder 模
 |------|------|--------------|
 | mini_agent ch06 | Python | Builder 模式 + PromptTemplate + FewShot |
 | nanobot (HKUDS) | Python | Jinja2 模板引擎，SOUL.md 人格文件，Skills 注入提示词 |
-| hermes-agent (NousResearch) | Python | Personalities 系统，Context 文件，动态工具描述 |
-| openclaw | TypeScript | YAML Skills 提示词区块，SOUL.md，多代理提示词路由 |
+| hermes-agent (NousResearch) | Python | SOUL.md 人格文件，Personalities 系统，Context 文件 |
+| claude-code (samz406) | TypeScript | 多层级覆盖系统，Skills + Plugins 动态注入 |
+
+---
+
+## 提示词组装详解：三大 Agent 实现拆解
+
+> 本节深入研究三个生产级 Agent 的提示词组装代码，逐层拆解每个 Agent 最终发给模型的系统提示词是如何一块一块拼出来的。
+
+### 什么是"提示词组装"？
+
+提示词组装（Prompt Assembly）是指在每次调用 LLM 之前，将多个来源的文本片段合并成一个完整系统提示词的过程。与简单的字符串拼接不同，生产级 Agent 的组装过程通常涉及：
+
+- **多个独立来源**：人格文件、工具描述、记忆摘要、用户上下文、运行时信息……
+- **优先级与覆盖逻辑**：某些来源可以替换其他来源（例如自定义提示词替换默认提示词）
+- **条件性包含**：只有在特定条件成立时才包含某个区块（例如只有存在可用技能时才包含技能列表）
+- **每轮动态注入**：部分信息（当前时间、会话 ID）在每次用户消息时重新注入，而非固定在系统提示词中
+
+---
+
+### 1. Claude Code 的提示词组装（TypeScript）
+
+**代码仓库**：[samz406/claude-code](https://github.com/samz406/claude-code)  
+**核心文件**：`src/utils/systemPrompt.ts`、`src/utils/queryContext.ts`、`src/QueryEngine.ts`
+
+#### 1.1 组装入口：`submitMessage()`
+
+每次用户发送消息时，`QueryEngine.submitMessage()` 被调用，它触发完整的提示词组装流程：
+
+```typescript
+// src/QueryEngine.ts（简化）
+async *submitMessage(prompt, options) {
+  // ① 获取系统提示词的各个组成部分
+  const { defaultSystemPrompt, userContext, systemContext } =
+    await fetchSystemPromptParts({
+      tools,
+      mainLoopModel,
+      additionalWorkingDirectories,
+      mcpClients,
+      customSystemPrompt,  // 用户通过 --system-prompt 传入的自定义提示词
+    })
+
+  // ② 可选：注入内存机制提示词
+  //    仅在 SDK 模式下且设置了 CLAUDE_COWORK_MEMORY_PATH_OVERRIDE 时启用
+  const memoryMechanicsPrompt =
+    customPrompt !== undefined && hasAutoMemPathOverride()
+      ? await loadMemoryPrompt()
+      : null
+
+  // ③ 将所有部分拼装成最终系统提示词
+  const systemPrompt = asSystemPrompt([
+    ...(customPrompt !== undefined ? [customPrompt] : defaultSystemPrompt),
+    ...(memoryMechanicsPrompt ? [memoryMechanicsPrompt] : []),
+    ...(appendSystemPrompt ? [appendSystemPrompt] : []),
+  ])
+
+  // ④ 异步加载 Skills 和 Plugins（并行执行）
+  const [skills, { enabled: enabledPlugins }] = await Promise.all([
+    getSlashCommandToolSkills(getCwd()),
+    loadAllPluginsCacheOnly(),
+  ])
+
+  // ⑤ 构建最终的 system init 消息（含工具列表）
+  yield buildSystemInitMessage({ tools, skills, plugins: enabledPlugins, ... })
+}
+```
+
+#### 1.2 多层级覆盖系统：`buildEffectiveSystemPrompt()`
+
+Claude Code 最精妙的设计在于其**多层级提示词覆盖系统**。`src/utils/systemPrompt.ts` 中的 `buildEffectiveSystemPrompt()` 实现了严格的优先级：
+
+```typescript
+// src/utils/systemPrompt.ts（简化，保留核心优先级逻辑）
+export function buildEffectiveSystemPrompt({
+  mainThreadAgentDefinition,   // 当前激活的 Agent 定义（可选）
+  toolUseContext,
+  customSystemPrompt,          // --system-prompt 传入的自定义提示词
+  defaultSystemPrompt,         // 从 constants/prompts.ts 构建的默认提示词
+  appendSystemPrompt,          // --append-system-prompt 永远追加在末尾
+  overrideSystemPrompt,        // 最高优先级覆盖（循环模式等）
+}): SystemPrompt {
+
+  // 优先级 0：覆盖提示词（最高优先级，直接替换一切）
+  if (overrideSystemPrompt) {
+    return asSystemPrompt([overrideSystemPrompt])
+    // 注意：appendSystemPrompt 在此模式下也被忽略
+  }
+
+  // 优先级 1：协调者模式（多代理编排时主 Agent 使用专用提示词）
+  if (isCoordinatorMode() && !mainThreadAgentDefinition) {
+    return asSystemPrompt([
+      getCoordinatorSystemPrompt(),
+      ...(appendSystemPrompt ? [appendSystemPrompt] : []),
+    ])
+  }
+
+  // 优先级 2：Agent 系统提示词（特定 Agent 激活时）
+  const agentSystemPrompt = mainThreadAgentDefinition
+    ? mainThreadAgentDefinition.getSystemPrompt()
+    : undefined
+
+  // 在"主动模式"（Proactive/Kairos）下，Agent 提示词叠加在默认提示词之上
+  if (agentSystemPrompt && isProactiveActive()) {
+    return asSystemPrompt([
+      ...defaultSystemPrompt,
+      `\n# Custom Agent Instructions\n${agentSystemPrompt}`,
+      ...(appendSystemPrompt ? [appendSystemPrompt] : []),
+    ])
+  }
+
+  // 其他情况：优先级 3（agentPrompt）> 4（customPrompt）> 5（defaultPrompt）
+  return asSystemPrompt([
+    ...(agentSystemPrompt
+      ? [agentSystemPrompt]          // Agent 提示词（替换默认）
+      : customSystemPrompt
+        ? [customSystemPrompt]       // 用户自定义提示词（替换默认）
+        : defaultSystemPrompt),      // 默认提示词（兜底）
+    ...(appendSystemPrompt ? [appendSystemPrompt] : []),
+  ])
+}
+```
+
+#### 1.3 默认系统提示词的来源
+
+`defaultSystemPrompt` 来自 `getSystemPrompt()` 函数（`src/constants/prompts.ts`，约 54KB 的 TypeScript 文件），这是 Claude Code 的核心行为定义，硬编码在代码中，内容包括：
+
+- Claude 的角色定位（编程助手，直接、高效）
+- 工具使用规则（何时用 `Read`、`Write`、`Bash` 等）
+- 代码质量要求
+- 安全和权限限制
+- 工作目录上下文
+
+#### 1.4 组装结果示意图
+
+```
+┌─────────────────────────────────────────────────┐
+│              最终系统提示词（按优先级）               │
+├─────────────────────────────────────────────────┤
+│  [Block 1] 主体部分（四选一，互斥）：               │
+│    - overrideSystemPrompt（最高优先级）             │
+│    - coordinatorSystemPrompt（协调者模式）          │
+│    - agentSystemPrompt（特定 Agent）               │
+│    - customSystemPrompt 或 defaultSystemPrompt    │
+├─────────────────────────────────────────────────┤
+│  [Block 2] memoryMechanicsPrompt（可选）           │
+│    - 仅在 SDK 模式 + 内存路径覆盖时注入              │
+├─────────────────────────────────────────────────┤
+│  [Block 3] appendSystemPrompt（可选，永远追加）     │
+│    - 通过 --append-system-prompt 指定              │
+├─────────────────────────────────────────────────┤
+│  + tools 列表（通过 function calling 结构传入）     │
+│  + skills（斜杠命令技能）                          │
+│  + plugins（启用的插件）                           │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+### 2. Nanobot 的提示词组装（Python + Jinja2）
+
+**代码仓库**：[HKUDS/nanobot](https://github.com/HKUDS/nanobot)  
+**核心文件**：`nanobot/agent/context.py`、`nanobot/templates/agent/identity.md`
+
+#### 2.1 组装入口：`ContextBuilder`
+
+Nanobot 使用 `ContextBuilder` 类统一管理提示词组装，每次用户发消息时调用 `build_messages()`：
+
+```python
+# nanobot/agent/context.py
+class ContextBuilder:
+    # 启动时必须加载的"引导文件"列表
+    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
+
+    def build_system_prompt(self, skill_names=None, channel=None) -> str:
+        """将所有部分拼装成完整的系统提示词。"""
+        parts = []
+
+        # ① 核心身份区块（通过 Jinja2 模板渲染）
+        parts.append(self._get_identity(channel=channel))
+
+        # ② 引导文件区块（从工作目录读取，用户可自定义）
+        bootstrap = self._load_bootstrap_files()
+        if bootstrap:
+            parts.append(bootstrap)
+
+        # ③ 记忆区块（跨会话的持久化记忆，非默认模板才注入）
+        memory = self.memory.get_memory_context()
+        if memory and not self._is_template_content(memory, "memory/MEMORY.md"):
+            parts.append(f"# Memory\n\n{memory}")
+
+        # ④ "永远激活"技能区块（配置为 always-on 的技能全文注入）
+        always_skills = self.skills.get_always_skills()
+        if always_skills:
+            always_content = self.skills.load_skills_for_context(always_skills)
+            if always_content:
+                parts.append(f"# Active Skills\n\n{always_content}")
+
+        # ⑤ 技能目录区块（其余可用技能的摘要，按需读取）
+        skills_summary = self.skills.build_skills_summary(exclude=set(always_skills))
+        if skills_summary:
+            parts.append(render_template("agent/skills_section.md",
+                                         skills_summary=skills_summary))
+
+        # ⑥ 最近历史区块（最多 50 条，最多 32KB）
+        entries = self.memory.read_unprocessed_history(
+            since_cursor=self.memory.get_last_dream_cursor()
+        )
+        if entries:
+            capped = entries[-50:]
+            history_text = "\n".join(
+                f"- [{e['timestamp']}] {e['content']}" for e in capped
+            )
+            parts.append("# Recent History\n\n" + history_text[:32_000])
+
+        # 用 "---" 分隔符连接所有区块
+        return "\n\n---\n\n".join(parts)
+```
+
+#### 2.2 核心身份区块：Jinja2 模板
+
+身份区块由 `nanobot/templates/agent/identity.md` 渲染而来，这是真正体现 Jinja2 价值的地方——同一份模板根据运行时参数输出不同内容：
+
+```jinja2
+{# nanobot/templates/agent/identity.md #}
+## Runtime
+{{ runtime }}
+
+## Workspace
+Your workspace is at: {{ workspace_path }}
+- Long-term memory: {{ workspace_path }}/memory/MEMORY.md
+- History log: {{ workspace_path }}/memory/history.jsonl
+
+{{ platform_policy }}
+
+{# 根据平台动态切换格式提示 #}
+{% if channel == 'telegram' or channel == 'qq' or channel == 'discord' %}
+## Format Hint
+This conversation is on a messaging app. Use short paragraphs. Avoid large headings.
+{% elif channel == 'whatsapp' or channel == 'sms' %}
+## Format Hint
+This conversation is on a text messaging platform. Use plain text only.
+{% elif channel == 'cli' %}
+## Format Hint
+Output is rendered in a terminal. Avoid markdown headings and tables.
+{% endif %}
+
+## Search & Discovery
+- Prefer built-in `grep` / `glob` over `exec` for workspace search.
+```
+
+渲染调用：
+
+```python
+def _get_identity(self, channel: str | None = None) -> str:
+    workspace_path = str(self.workspace.expanduser().resolve())
+    system = platform.system()
+    runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
+
+    return render_template(
+        "agent/identity.md",
+        workspace_path=workspace_path,
+        runtime=runtime,
+        platform_policy=render_template("agent/platform_policy.md", system=system),
+        channel=channel or "",
+    )
+```
+
+#### 2.3 引导文件：工作目录中的可覆盖配置
+
+```python
+def _load_bootstrap_files(self) -> str:
+    """加载工作目录中的引导文件（用户可自定义覆盖）。"""
+    parts = []
+    for filename in ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]:
+        file_path = self.workspace / filename
+        if file_path.exists():
+            content = file_path.read_text(encoding="utf-8")
+            parts.append(f"## {filename}\n\n{content}")
+    return "\n\n".join(parts) if parts else ""
+```
+
+默认 `SOUL.md` 内容（`nanobot/templates/SOUL.md`）：
+
+```markdown
+# Soul
+I am nanobot 🐈, a personal AI assistant.
+
+## Core Principles
+- Solve by doing, not by describing what I would do.
+- Keep responses short unless depth is asked for.
+- Say what I know, flag what I don't, and never fake confidence.
+
+## Execution Rules
+- Act immediately on single-step tasks — never end a turn with just a plan.
+- Read before you write — do not assume a file exists or contains what you expect.
+```
+
+#### 2.4 每轮动态注入：运行时上下文
+
+系统提示词是**一次性构建**的，但每次用户发消息时，会在用户消息**前面**拼入一段运行时元数据：
+
+```python
+def build_messages(self, history, current_message, ...) -> list:
+    # 构建运行时上下文（每次都刷新）
+    runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone, session_summary)
+    user_content = self._build_user_content(current_message, media)
+
+    # 将运行时上下文和用户消息合并进同一个 user 消息
+    merged = f"{runtime_ctx}\n\n{user_content}"
+
+    messages = [
+        {"role": "system", "content": self.build_system_prompt(skill_names, channel)},
+        *history,
+        {"role": "user", "content": merged},
+    ]
+    return messages
+
+@staticmethod
+def _build_runtime_context(channel, chat_id, timezone, session_summary=None) -> str:
+    """构建每轮注入的运行时元数据块。"""
+    lines = [f"Current Time: {current_time_str(timezone)}"]
+    if channel and chat_id:
+        lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
+    if session_summary:
+        lines += ["", "[Resumed Session]", session_summary]
+
+    # 明确标注这是元数据，不是指令，防止模型将其视为用户指令
+    return (
+        "[Runtime Context — metadata only, not instructions]\n"
+        + "\n".join(lines)
+        + "\n[/Runtime Context]"
+    )
+```
+
+#### 2.5 子代理提示词：独立 Jinja2 模板
+
+子代理（subagent）使用**完全独立**的系统提示词（`templates/agent/subagent_system.md`），不继承主代理的人格和记忆，只关注任务本身：
+
+```jinja2
+{# nanobot/templates/agent/subagent_system.md #}
+# Subagent
+
+{{ time_ctx }}
+
+You are a subagent spawned by the main agent to complete a specific task.
+Stay focused on the assigned task. Your final response will be reported
+back to the main agent.
+
+## Workspace
+{{ workspace }}
+{% if skills_summary %}
+## Skills
+Read SKILL.md with read_file to use a skill.
+{{ skills_summary }}
+{% endif %}
+```
+
+#### 2.6 组装结果示意图
+
+```
+┌─────────────────────────────────────────────────┐
+│              系统提示词（system 消息）               │
+├─────────────────────────────────────────────────┤
+│  [Part 1] identity.md（Jinja2 渲染）              │
+│    - 运行时信息（OS、Python 版本）                  │
+│    - 工作目录路径                                  │
+│    - 平台策略（条件分支）                           │
+│    - 格式提示（按 channel 动态输出）                 │
+├─────────────────────────────────────────────────┤
+│  [Part 2] Bootstrap 文件（工作目录中读取，可覆盖）    │
+│    - AGENTS.md（任务特定指令）                     │
+│    - SOUL.md（人格 / 核心原则）                    │
+│    - USER.md（用户画像）                           │
+│    - TOOLS.md（工具使用注意事项）                   │
+├─────────────────────────────────────────────────┤
+│  [Part 3] Memory（跨会话记忆，可选）                │
+├─────────────────────────────────────────────────┤
+│  [Part 4] Active Skills（永远激活的技能全文，可选）  │
+├─────────────────────────────────────────────────┤
+│  [Part 5] Skills 目录摘要（可选）                  │
+├─────────────────────────────────────────────────┤
+│  [Part 6] Recent History（最近 50 条，可选）        │
+└─────────────────────────────────────────────────┘
+          各部分之间用 "\n\n---\n\n" 分隔
+
+┌─────────────────────────────────────────────────┐
+│              每轮 user 消息（动态注入）              │
+├─────────────────────────────────────────────────┤
+│  [Runtime Context 标签块]                        │
+│    - 当前时间                                     │
+│    - Channel + Chat ID                           │
+│    - 会话摘要（恢复会话时）                         │
+├─────────────────────────────────────────────────┤
+│  [用户实际输入的文本 / 图片]                        │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+### 3. Hermes-Agent 的提示词组装（Python）
+
+**代码仓库**：[NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)  
+**核心文件**：`hermes_cli/default_soul.py`、`hermes_cli/main.py`
+
+#### 3.1 人格基础：SOUL.md 文件
+
+Hermes-Agent 的提示词组装以 SOUL.md 为出发点。在 `~/.hermes/SOUL.md` 不存在时，系统使用 `default_soul.py` 中的默认人格：
+
+```python
+# hermes_cli/default_soul.py
+DEFAULT_SOUL_MD = (
+    "You are Hermes Agent, an intelligent AI assistant created by Nous Research. "
+    "You are helpful, knowledgeable, and direct. You assist users with a wide "
+    "range of tasks including answering questions, writing and editing code, "
+    "analyzing information, creative work, and executing actions via your tools. "
+    "You communicate clearly, admit uncertainty when appropriate, and prioritize "
+    "being genuinely useful over being verbose unless otherwise directed below. "
+    "Be targeted and efficient in your exploration and investigations."
+)
+```
+
+用户可以在 `~/.hermes/SOUL.md` 中完全替换这段文本——这是定义 Agent 人格的首选方式。
+
+#### 3.2 系统提示词组装的各个层次
+
+Hermes-Agent 的系统提示词由以下层次顺序组装（核心逻辑分布在 `hermes_cli/main.py` 的会话初始化代码中）：
+
+```
+系统提示词组装顺序
+=================
+① SOUL.md 内容
+   └─ 读取 ~/.hermes/SOUL.md（用户自定义人格）
+   └─ 若不存在则使用 DEFAULT_SOUL_MD
+   └─ 若通过 /personality 切换了人格则使用对应人格文件
+
+② Personality 系统（可选）
+   └─ /personality <name> 命令切换到预设人格
+   └─ 人格文件覆盖 SOUL.md 中的角色描述
+
+③ Memory 注入（可选）
+   └─ ~/.hermes/memory/MEMORY.md 内容
+   └─ ~/.hermes/memory/USER.md 用户画像
+   └─ 自动由 Dream 后台进程维护和压缩
+
+④ Context 文件注入（可选）
+   └─ 项目级 AGENTS.md（当前目录或父目录中）
+   └─ 定义项目特定的行为规则和工具偏好
+
+⑤ Skills 区块（可选）
+   └─ 已激活技能的系统提示词片段追加到末尾
+   └─ 每个技能通过 SKILL.md 文件自描述
+
+⑥ 工具描述（通过 function calling 结构传入）
+   └─ 40+ 内置工具
+   └─ MCP 服务器动态发现的工具
+```
+
+#### 3.3 Personalities 系统：多人格切换
+
+Hermes-Agent 支持通过 `/personality` 命令在运行时切换 Agent 的人格，无需重启。人格文件通常存放在 `~/.hermes/personalities/` 目录下，每个人格是一份独立的 Markdown 文件：
+
+```bash
+# 使用示例
+/personality coder         # 切换到编程专家人格
+/personality assistant     # 切换回通用助手人格
+/personality researcher    # 切换到研究员人格
+```
+
+每次切换后，系统在下一轮请求时用新人格文件的内容替换系统提示词中的 SOUL 区块，其余部分（记忆、技能、工具）保持不变。
+
+#### 3.4 跨平台：同一组装逻辑，不同渠道
+
+Hermes-Agent 支持 CLI、Telegram、Discord、WhatsApp、Slack 等多个平台。不同平台的**核心系统提示词相同**（SOUL + 记忆 + 技能），只在消息发送格式上有差异。这与 Nanobot 的渠道感知格式提示设计理念相同，但实现层面不同：
+
+- Nanobot 在 Jinja2 模板中使用 `{% if channel == 'telegram' %}` 动态插入格式提示
+- Hermes-Agent 通过网关（Gateway）层做消息格式转换，系统提示词层保持平台无关
+
+#### 3.5 Memory Dream 机制：自动维护系统提示词中的记忆
+
+Hermes-Agent 的记忆注入最大的特点是**自动维护**。系统有一个"Dream"后台进程，定期：
+
+1. 读取对话历史
+2. 调用 LLM 提取值得记住的关键信息
+3. 压缩并写入 MEMORY.md
+
+这意味着注入系统提示词的记忆区块是**经过 LLM 筛选和整理**的，而不是原始的对话记录。
+
+```
+[Dream 机制流程]
+对话历史 → LLM 分析 → 提取关键信息 → 写入 MEMORY.md
+                                              ↓
+                         下次会话系统提示词 ← 读取 MEMORY.md
+```
+
+#### 3.6 组装结果示意图
+
+```
+┌─────────────────────────────────────────────────┐
+│              系统提示词（system 消息）               │
+├─────────────────────────────────────────────────┤
+│  [Part 1] SOUL / Personality                    │
+│    - ~/.hermes/SOUL.md（用户自定义）               │
+│    - 或 DEFAULT_SOUL_MD（默认兜底）                │
+│    - 或 personalities/<name>.md（切换人格时）       │
+├─────────────────────────────────────────────────┤
+│  [Part 2] Memory（可选，Dream 自动维护）           │
+│    - ~/.hermes/memory/MEMORY.md                 │
+│    - ~/.hermes/memory/USER.md                   │
+├─────────────────────────────────────────────────┤
+│  [Part 3] Context Files（可选，项目级）            │
+│    - 当前目录 / 父目录中的 AGENTS.md              │
+├─────────────────────────────────────────────────┤
+│  [Part 4] Active Skills（可选）                  │
+│    - 每个激活技能的系统提示词片段                   │
+├─────────────────────────────────────────────────┤
+│  + 工具列表（function calling 结构）              │
+│  + MCP 工具（动态发现）                           │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+### 4. 三大 Agent 提示词组装对比总结
+
+#### 4.1 相同点
+
+| 维度 | Claude Code | Nanobot | Hermes-Agent |
+|------|-------------|---------|--------------|
+| **人格文件化** | 默认提示词在代码中，可通过 customSystemPrompt 替换 | SOUL.md 文件（工作目录级） | SOUL.md 文件（用户主目录级） |
+| **工具通过 FC 传递** | ✅ function calling 结构 | ✅ function calling 结构 | ✅ function calling 结构 |
+| **记忆注入** | ✅ 通过 memoryMechanicsPrompt | ✅ Memory 区块 | ✅ Dream 机制 |
+| **技能/插件系统** | ✅ Skills + Plugins | ✅ Skills（按需/永久激活） | ✅ Skills（agentskills.io 标准） |
+| **条件性区块** | ✅ 多层覆盖条件判断 | ✅ 每个 Part 有存在性检查 | ✅ 各区块按配置开关 |
+| **多代理支持** | ✅ 子代理/协调者专用提示词 | ✅ subagent_system.md 模板 | ✅ 子代理 RPC 调用 |
+
+**三者共同的核心设计原则**：
+1. **系统提示词是数据，不是魔法**：所有内容都有明确的来源，可以追踪和修改
+2. **分区管理**：人格、记忆、工具、规则各自独立管理，互不耦合
+3. **渐进增强**：有一个稳定的"最小系统提示词"，其余功能通过叠加区块来增强
+4. **工具描述与系统提示词分离**：工具通过 function calling 结构传递，不内嵌在提示词文本中
+
+#### 4.2 不同点
+
+| 维度 | Claude Code | Nanobot | Hermes-Agent |
+|------|-------------|---------|--------------|
+| **语言** | TypeScript | Python | Python |
+| **提示词主体存放** | 硬编码在 TypeScript 代码中（`constants/prompts.ts`，54KB） | Jinja2 模板文件（`templates/`） | SOUL.md 文件（纯文本） |
+| **覆盖机制复杂度** | 高：5 个优先级层，互斥且有顺序 | 低：各 Part 独立叠加，无优先级冲突 | 中：人格文件可切换，其余固定叠加 |
+| **运行时信息注入** | 不注入（环境信息通过工具调用获取） | 每轮注入：当前时间、Channel、Chat ID | 不注入固定元数据 |
+| **平台适配方式** | 无（纯代码工具，单一平台） | Jinja2 模板中条件分支（channel 参数） | 网关层消息格式转换 |
+| **人格切换** | 运行时通过 `--system-prompt` 替换 | 工作目录中替换 SOUL.md 文件 | `/personality` 命令热切换 |
+| **记忆维护** | 依赖外部（SDK 调用者负责） | Dream 处理写入，ContextBuilder 读取注入 | Dream 后台进程自动维护 |
+| **子代理提示词隔离** | ✅ 协调者模式专用提示词 | ✅ 完全独立的 subagent_system.md 模板 | ✅ 子代理 RPC 调用，隔离 context |
+| **提示词可观测性** | 低（硬编码在大文件中） | 高（模板文件直接可读） | 中（SOUL.md 可读，其余分散） |
+
+#### 4.3 设计哲学差异
+
+**Claude Code** 的设计重点是**灵活性和可扩展性**：通过多层覆盖系统，任何调用者都可以在不修改代码的情况下定制 Agent 的行为。代价是组装逻辑相对复杂，提示词内容对非工程师不透明。
+
+**Nanobot** 的设计重点是**关注点分离和透明度**：提示词的结构（模板）和内容（配置文件）完全分离，工作目录中的 Markdown 文件对用户完全可见。任何人都可以通过直接编辑文件来改变 Agent 的行为，无需理解代码。
+
+**Hermes-Agent** 的设计重点是**个性化和长期关系**：以用户为中心，SOUL.md 定义 Agent 的"灵魂"，Dream 机制让 Agent 持续学习用户的偏好和历史，技能系统让能力可以动态增长。提示词不只是技术配置，而是 Agent 与用户长期关系的载体。
+
+#### 4.4 对 mini_agent 的启发
+
+从这三个项目的组装方式，可以提炼出对 mini_agent `ch06` 的进化路径：
+
+| 当前状态 | 进化方向 |
+|---------|---------|
+| `SystemPromptBuilder` Python 代码构建 | 可引入 Jinja2 模板，实现结构与内容分离 |
+| 人格硬编码在 `add_role()` 参数中 | 可提取为 `SOUL.md` 文件，支持运行时切换 |
+| 无覆盖机制 | 可参考 Claude Code 的优先级系统 |
+| 无运行时信息注入 | 可参考 Nanobot 的 Runtime Context 标签块 |
+| 记忆手动管理 | 可参考 Hermes-Agent 的 Dream 机制 |
+
+---
 
 ## 核心设计对比
 
