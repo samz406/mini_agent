@@ -4,7 +4,9 @@
 
 提示词（Prompt）是代码——本章就按这个思路来设计：结构化、可组合、可测试。你将构建三个互补的工具，用来生成高质量的提示词。
 
-> 📖 学完本章后，可以阅读 `extended_reading.md`，了解 nanobot 用 Jinja2 模板引擎构建提示词、hermes-agent 的 SOUL.md 人格文件、Few-Shot 示例的选择策略等进阶设计。
+> 📖 学完本章后，可以阅读 `extended_reading.md`，其中包含：
+> - **提示词组装详解**：逐层拆解 Claude Code、Nanobot、Hermes-Agent 三大生产级 Agent 的实际组装代码，包括多层覆盖系统、Jinja2 模板渲染、SOUL.md 人格机制，以及相同点与不同点的对比总结。
+> - **进阶设计模式**：代码构建器 vs 模板引擎、SOUL.md 人格文件、动态 Few-Shot 选择、多代理提示词隔离、提示词版本管理。
 
 ## 三个工具
 
